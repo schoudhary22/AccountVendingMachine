@@ -109,7 +109,7 @@ Resources:
       StackName : 'avm-baseline-stack'
       StackRegion : !Ref StackRegion
       ServiceCatalogUserName : 'service-catalog-user'
-      ServiceCatalogUserPassword : 'service-catalog-2019'
+      ServiceCatalogUserPassword : 'Password@123'
       SourceBucket : !Ref SourceBucket
       BaselineTemplate: !Ref BaselineTemplate
       CloudTrailCWLogsRetentionTime: !Ref CloudTrailCWLogsRetentionTime
