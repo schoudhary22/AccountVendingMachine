@@ -530,7 +530,6 @@ Resources:
         Info:
           LoadTemplateFromURL : "https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/vpc/sc-vpc-ra.json"
 
-
   S3BucketProduct:
     Type: "AWS::ServiceCatalog::CloudFormationProduct"
     Properties:
