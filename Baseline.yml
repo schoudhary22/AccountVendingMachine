@@ -1,623 +1,286 @@
-AWSTemplateFormatVersion: 2010-09-09
-Description: Baseline IAM resources for new account
-
+AWSTemplateFormatVersion: 2010-09-09T00:00:00.000Z
+Description: 'Baseline IAM resources for new account'
 Parameters:
-  ServiceCatalogUserName:
-    Type: String
-    Description: Username for the IAM user for ServiceCatalog in the newly vended account
-  ServiceCatalogUserPassword:
-    Type: String
-    NoEcho: true
-    MinLength: 1
-    Description: Password for the IAM user for ServiceCatalog in the newly vended account
-
-  CloudTrailCWLogsRetentionTime:
-    Type: Number
-    Description: 'Number of days to retain logs in CloudWatch Logs. 0=Forever. Default 1 year, note logs are stored in S3 default 10 years'
-
-  CloudTrailLogS3DataEvents:
-    Type: String
-    Description: 'OPTIONAL: These events provide insight into the resource operations performed on or within S3'
-  CloudTrailEncryptS3Logs:
-    Type: String
-    Description: 'OPTIONAL: Use KMS to enrypt logs stored in S3. A new key will be created'
-
-
-  #Config
-  ConfigSnapshotFrequency:
-    Type: String
-    Description: AWS Config configuration snapshot frequency
-
-
-  #GuardDuty
-  GuardDutyEmailAddress:
-    Type: String
-    Description: Enter the email address that will receive the alerts
-
-
+    ServiceCatalogUserName:
+        Type: String
+        Description: 'Username for the IAM user for ServiceCatalog in the newly vended account'
+    ServiceCatalogUserPassword:
+        Type: String
+        NoEcho: true
+        MinLength: 1
+        Description: 'Password for the IAM user for ServiceCatalog in the newly vended account'
+    CloudTrailCWLogsRetentionTime:
+        Type: Number
+        Description: 'Number of days to retain logs in CloudWatch Logs. 0=Forever. Default 1 year, note logs are stored in S3 default 10 years'
+    CloudTrailLogS3DataEvents:
+        Type: String
+        Description: 'OPTIONAL: These events provide insight into the resource operations performed on or within S3'
+    CloudTrailEncryptS3Logs:
+        Type: String
+        Description: 'OPTIONAL: Use KMS to enrypt logs stored in S3. A new key will be created'
+    ConfigSnapshotFrequency:
+        Type: String
+        Description: 'AWS Config configuration snapshot frequency'
+    GuardDutyEmailAddress:
+        Type: String
+        Description: 'Enter the email address that will receive the alerts'
 Conditions:
-
-  CloudTrailLogS3DataEventsEnabled: !Equals
-    - !Ref CloudTrailLogS3DataEvents
-    - 'Yes'
-  CloudTrailEncryptS3LogsEnabled: !Equals
-    - !Ref CloudTrailEncryptS3Logs
-    - 'Yes'
-
+    CloudTrailLogS3DataEventsEnabled: null
+    CloudTrailEncryptS3LogsEnabled: null
 Resources:
-  CloudTrailDestinationBucket:
-    Type: 'AWS::S3::Bucket'
-    Condition: CloudTrailEnabled
-    Properties:
-      BucketName: !Sub 'CloudTrail-AVM-${AWS::AccountId}'
-    DeletionPolicy: Delete
-    
-  CloudTrailBucketPolicy:
-    Type: 'AWS::S3::BucketPolicy'
-    Condition: CloudTrailEnabled
-    DependsOn:
-      - CloudTrailDestinationBucket
-    Properties:
-      Bucket: !Ref CloudTrailDestinationBucket
-      PolicyDocument:
-        Id: CloudTrailService
-        Statement:
-          - Action:
-              - 's3:GetBucketAcl'
-            Principal:
-              Service: cloudtrail.amazonaws.com
-            Effect: Allow
-            Resource:
-              - !Join 
-                - ''
-                - - 'arn:aws:s3:::'
-                  - !Ref CloudTrailDestinationBucket
-            Sid: AllowCloudTrailServiceGetAcl
-          - Action:
-              - 's3:PutObject'
-            Principal:
-              Service: cloudtrail.amazonaws.com
-            Effect: Allow
-            Condition:
-              StringEquals:
-                's3:x-amz-acl': bucket-owner-full-control
-            Resource:
-              - !Join 
-                - ''
-                - - 'arn:aws:s3:::'
-                  - !Ref CloudTrailDestinationBucket
-                  - /*
-            Sid: AllowCloudTrailServicePutS
-        Version: 2012-10-17
-
-  CloudTrailKMSKey:
-    Type: 'AWS::KMS::Key'
-    DeletionPolicy: Delete
-    Condition: CloudTrailEncryptS3LogsEnabled
-    Properties:
-      Description: KMS Key for Cloudtrail to use to encrypt logs stored in S3
-      KeyPolicy:
-        Version: 2012-10-17
-        Id: Key policy created by CloudTrail
-        Statement:
-          - Sid: Enable IAM User Permissions
-            Effect: Allow
-            Principal:
-              AWS:
-                - !Join 
-                  - ''
-                  - - 'arn:aws:iam::'
-                    - !Ref 'AWS::AccountId'
-                    - ':root'
-            Action: 'kms:*'
-            Resource: '*'
-          - Sid: Allow CloudTrail to encrypt logs
-            Effect: Allow
-            Principal:
-              Service:
-                - cloudtrail.amazonaws.com
-            Action: 'kms:GenerateDataKey*'
-            Resource: '*'
-            Condition:
-              StringLike:
-                'kms:EncryptionContext:aws:cloudtrail:arn': !Join 
-                  - ''
-                  - - 'arn:aws:cloudtrail:*:'
-                    - !Ref 'AWS::AccountId'
-                    - ':trail/*'
-          - Sid: Allow CloudTrail to describe key
-            Effect: Allow
-            Principal:
-              Service:
-                - cloudtrail.amazonaws.com
-            Action: 'kms:DescribeKey'
-            Resource: '*'
-          - Sid: Allow principals in the account to decrypt log files
-            Effect: Allow
-            Principal:
-              AWS: '*'
-            Action:
-              - 'kms:Decrypt'
-              - 'kms:ReEncryptFrom'
-            Resource: '*'
-            Condition:
-              StringEquals:
-                'kms:CallerAccount': !Ref 'AWS::AccountId'
-              StringLike:
-                'kms:EncryptionContext:aws:cloudtrail:arn': !Join 
-                  - ''
-                  - - 'arn:aws:cloudtrail:*:'
-                    - !Ref 'AWS::AccountId'
-                    - ':trail/*'
-          - Sid: Allow alias creation during setup
-            Effect: Allow
-            Principal:
-              AWS: '*'
-            Action: 'kms:CreateAlias'
-            Resource: '*'
-            Condition:
-              StringEquals:
-                'kms:ViaService': !Join 
-                  - ''
-                  - - ec2.
-                    - !Ref 'AWS::Region'
-                    - .amazonaws.com
-                'kms:CallerAccount': !Ref 'AWS::AccountId'
-          - Sid: Enable cross account log decryption
-            Effect: Allow
-            Principal:
-              AWS: '*'
-            Action:
-              - 'kms:Decrypt'
-              - 'kms:ReEncryptFrom'
-            Resource: '*'
-            Condition:
-              StringEquals:
-                'kms:CallerAccount': !Ref 'AWS::AccountId'
-              StringLike:
-                'kms:EncryptionContext:aws:cloudtrail:arn': !Join 
-                  - ''
-                  - - 'arn:aws:cloudtrail:*:'
-                    - !Ref 'AWS::AccountId'
-                    - ':trail/*'
-
-  CloudTrailDestinationTrail:
-    Type: 'AWS::CloudTrail::Trail'
-    DependsOn:
-      - CloudTrailBucketPolicy
-      - CloudTrailCWLogsGroup
-      - CloudTrailCloudWatchLogsRole
-    Properties:
-      TrailName: default
-      S3BucketName: !Ref CloudTrailDestinationBucket
-      #S3KeyPrefix:
-      CloudWatchLogsLogGroupArn: !Sub '${CloudTrailCWLogsGroup.Arn}'
-      CloudWatchLogsRoleArn: !Sub '${CloudTrailCloudWatchLogsRole.Arn}'
-      #CloudWatchLogsRoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail'
-      EnableLogFileValidation: true
-      EventSelectors: #https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudtrail-trail-eventselector.html
-        - IncludeManagementEvents: true
-        - ReadWriteType: All
-        - !If 
-          - CloudTrailLogS3DataEventsEnabled
-          - DataResources:
-            - Type: AWS::S3::Object
-              Values:
-                - "arn:aws:s3:::"
-          - !Ref 'AWS::NoValue'
-      IncludeGlobalServiceEvents: true
-      IsMultiRegionTrail: true
-      IsLogging: true
-      KMSKeyId: !If 
-        - CloudTrailEncryptS3LogsEnabled
-        - !Ref CloudTrailKMSKey
-        - !Ref 'AWS::NoValue'
-
-  CloudTrailCWLogsGroup:
-    Type: 'AWS::Logs::LogGroup'
-    Properties:
-      RetentionInDays: 90
-  CloudTrailCloudWatchLogsRole:
-    Type: 'AWS::IAM::Role'
-    DependsOn:
-      - CloudTrailCWLogsGroup
-    Properties:
-      RoleName: CloudTrail_CloudWatchLogs_Role
-      AssumeRolePolicyDocument:
-        Statement:
-          - Action:
-              - 'sts:AssumeRole'
-            Effect: Allow
-            Principal:
-              Service: cloudtrail.amazonaws.com
-        Version: 2012-10-17
-      Policies:
-        - PolicyDocument:
-            Statement:
-              - Action:
-                  - 'logs:CreateLogStream'
-                Effect: Allow
-                Resource: !Sub '${CloudTrailCWLogsGroup.Arn}'
-              - Action:
-                  - 'logs:PutLogEvents'
-                Effect: Allow
-                Resource: !Sub '${CloudTrailCWLogsGroup.Arn}'
-            Version: 2012-10-17
-          PolicyName: CloudtrailInteractionPolicy
-
-
-  #Config
-  ConfigRole:
-    Type: 'AWS::IAM::Role'
-    Condition: ConfigEnabled
-    Properties:
-      RoleName: AWSConfigCustomRole
-      AssumeRolePolicyDocument:
-        Statement:
-          - Action:
-              - 'sts:AssumeRole'
-            Effect: Allow
-            Principal:
-              Service: config.amazonaws.com
-        Version: 2012-10-17
-      ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/service-role/AWSConfigRole'
-      Path: /service-role/
-      Policies:
-        - PolicyDocument:
-            Statement:
-              - Effect: Allow
-                Action:
-                  - 's3:PutObject'
-                Resource: !Sub 'arn:aws:s3:::${ConfigBucket}/*'
-              - Effect: Allow
-                Action:
-                  - 's3:GetBucketAcl'
-                Resource: !Sub 'arn:aws:s3:::${ConfigBucket}'
-            Version: 2012-10-17
-          PolicyName: ConfigServiceS3
-  ConfigDeliveryChannel:
-    Type: 'AWS::Config::DeliveryChannel'
-    #https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-config-deliverychannel.html
-    Condition: ConfigEnabled
-    Properties:
-      Name: default
-      ConfigSnapshotDeliveryProperties:
-        DeliveryFrequency: !Ref ConfigSnapshotFrequency
-      S3BucketName: !Ref ConfigBucket
-  ConfigRecorder:
-    Type: 'AWS::Config::ConfigurationRecorder'
-    #https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-config-configurationrecorder.html
-    Condition: ConfigEnabled
-    Properties:
-      Name: default
-      RecordingGroup:
-        AllSupported: 'true'
-        IncludeGlobalResourceTypes: 'true'
-      RoleARN: !Sub '${ConfigRole.Arn}'
-  ConfigBucket:
-    Type: 'AWS::S3::Bucket'
-    Properties:
-      BucketName: !Sub 'Config-AVM-${AWS::AccountId}'
-      LoggingConfiguration: !If 
-        - BucketLoggingEnabled
-        - DestinationBucketName: !Ref S3AccessLogsBucketName
-          LogFilePrefix: !Join 
-            - ''
-            - - !Ref ConfigBucketName
-              - /
-        - !Ref 'AWS::NoValue'
-    DeletionPolicy: Delete
-  ConfigBucketPolicy:
-    Type: 'AWS::S3::BucketPolicy'
-    DependsOn:
-      - ConfigBucket
-    Properties:
-      Bucket: !Ref ConfigBucket
-      PolicyDocument:
-        Id: ConfigService
-        Statement:
-          - !If 
-            - S3BucketExplicitDenyEnabled
-            - Action:
-                - 's3:DeleteBucket'
-                - 's3:DeleteBucketPolicy'
-                - 's3:DeleteBucketWebsite'
-                - 's3:DeleteObject'
-                - 's3:DeleteObjectVersion'
-                - 's3:PutAccelerateConfiguration'
-                - 's3:PutBucketAcl'
-                - 's3:PutBucketCORS'
-                - 's3:PutBucketLogging'
-                - 's3:PutBucketPolicy'
-                - 's3:PutBucketRequestPayment'
-                - 's3:PutBucketVersioning'
-                - 's3:PutBucketWebsite'
-                - 's3:PutLifecycleConfiguration'
-                - 's3:PutReplicationConfiguration'
-                - 's3:ReplicateDelete'
-                - 's3:ReplicateObject'
-                - 's3:RestoreObject'
-              Effect: Deny
-              Principal: '*'
-              Resource:
-                - !Join 
-                  - ''
-                  - - 'arn:aws:s3:::'
-                    - !Ref ConfigBucket
-                    - /*
-                - !Join 
-                  - ''
-                  - - 'arn:aws:s3:::'
-                    - !Ref ConfigBucket
-              Sid: DenyDestructiveActions
-            - !Ref 'AWS::NoValue'
-          - Action: 's3:GetBucketAcl'
-            Effect: Allow
-            Principal:
-              Service: cloudtrail.amazonaws.com
-            Resource: !Join 
-              - ''
-              - - 'arn:aws:s3:::'
-                - !Ref ConfigBucket
-            Sid: ConfigServiceACLCheck
-          - Action: 's3:PutObject'
-            Condition:
-              StringEquals:
-                's3:x-amz-acl': bucket-owner-full-control
-            Effect: Allow
-            Principal:
-              Service: cloudtrail.amazonaws.com
-            Resource:
-              - !Join 
-                - ''
-                - - 'arn:aws:s3:::'
-                  - !Ref ConfigBucket
-                  - /*
-            Sid: ConfigServiceWrite
-        Version: 2012-10-17
-
-  #GuardDuty
-  GuardDutyDetector:
-    Type: 'AWS::GuardDuty::Detector'
-    Properties:
-      Enable: true
-      FindingPublishingFrequency: FIFTEEN_MINUTES
-  GuardDutySNSTopic:
-    Type: 'AWS::SNS::Topic'
-    Properties:
-      TopicName: GuardDuty-Email
-  GuardDutyCWEvent:
-    Type: 'AWS::Events::Rule'
-    Properties:
-      Description: GuardDuty Email Event
-      EventPattern:
-        source:
-          - aws.guardduty
-        detail-type:
-          - GuardDuty Finding
-      State: ENABLED
-      Targets:
-        - Arn: !Ref GuardDutySNSTopic
-          Id: GuardDuty-Email
-  GuardDutySNSSubscription:
-    Type: 'AWS::SNS::Subscription'
-    Properties:
-      Endpoint: !Ref GuardDutyEmailAddress
-      Protocol: email
-      TopicArn: !Ref GuardDutySNSTopic
-
-             
-  ServiceCatalogUser:
-    Type: 'AWS::IAM::User'
-    Properties:
-      UserName: !Ref ServiceCatalogUserName
-      Path: /
-      LoginProfile:
-        Password: !Ref ServiceCatalogUserPassword
-        PasswordResetRequired: true
-
-  ServiceCatalogUserKey:
-    Type: AWS::IAM::AccessKey
-    Properties:
-      Status: 'Active'
-      UserName: !Ref ServiceCatalogUser
-
-  ServiceCatalogUserGroup:
-    Type: 'AWS::IAM::Group'
-    Properties:
-      GroupName: ServiceCatalogUserGroup
-      ManagedPolicyArns:
-        - "arn:aws:iam::aws:policy/AWSServiceCatalogEndUserFullAccess"
-        - "arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess"
-        - "arn:aws:iam::aws:policy/IAMUserChangePassword"
-      Path: /
-
-  ServiceCatalogGroupPolicy:
-    Type: AWS::IAM::Policy
-    Properties:
-      Groups:
-        - !Ref ServiceCatalogUserGroup
-      PolicyDocument:
-                Version: "2012-10-17"
-                Statement:
-                  -
-                    Effect: "Allow"
-                    Action:
-                      - "cloudformation:Describe*"
-                      - "cloudformation:List*"
-                      - "cloudformation:Get*"
-                      - "ec2:CreateKeyPair"
-                    Resource: "*"
-      PolicyName: "KeyPairCreate"
-
-  AddUserToGroup:
-    Type: 'AWS::IAM::UserToGroupAddition'
-    DependsOn: ServiceCatalogUserGroup
-    Properties:
-      GroupName: !Ref ServiceCatalogUserGroup
-      Users:
-        - !Ref ServiceCatalogUser
-
-  SCEC2LaunchRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      RoleName: SCEC2LaunchRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - servicecatalog.amazonaws.com
-            Action:
-              - 'sts:AssumeRole'
-      Path: /
-
-  EC2LinuxProduct:
-    Type: "AWS::ServiceCatalog::CloudFormationProduct"
-    Properties:
-      AcceptLanguage: "en"
-      Description: "This product builds one Amazon Linux EC2 instance and create a SSM patch baseline, maintenance window, and patch task to scan for and install operating system updates the EC2 instance."
-      Distributor: "Amazon"
-      Name: "Amazon Elastic Compute Cloud (EC2) Linux"
-      Owner: "IT Services"
-      SupportEmail: "support@yourcompany.com"
-      SupportUrl: "https://www.amazon.com"
-      SupportDescription: "Support Description"
-      ProvisioningArtifactParameters:
-      -
-        Description: "Dec 2019"
-        Name: "Dec 2019"
-        Info:
-          LoadTemplateFromURL : "https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/ec2/sc-ec2-linux-ra.json"
-
-  EC2WindowsProduct:
-    Type: "AWS::ServiceCatalog::CloudFormationProduct"
-    Properties:
-      AcceptLanguage: "en"
-      Description: "This product builds one Amazon Windows EC2 instance and create a SSM patch baseline, maintenance window, and patch task to scan for and install operating system updates the EC2 instance."
-      Distributor: "Amazon"
-      Name: "Amazon Elastic Compute Cloud (EC2) Windows"
-      Owner: "IT Services"
-      SupportEmail: "support@yourcompany.com"
-      SupportUrl: "https://www.amazon.com"
-      SupportDescription: "Support Description"
-      ProvisioningArtifactParameters:
-      -
-        Description: "Dec 2019"
-        Name: "Dec 2019"
-        Info:
-          LoadTemplateFromURL : "https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/ec2/sc-ec2-windows-ra.json"
-		  
-  VPCProduct:
-    Type: "AWS::ServiceCatalog::CloudFormationProduct"
-    Properties:
-      AcceptLanguage: "en"
-      Description: "This product builds one Amazon VPC with Public Subnets, Private Subnets, Route Tables, NAT Gateway and Internet Gateway"
-      Distributor: "Amazon"
-      Name: "Amazon VPC"
-      Owner: "IT Services"
-      SupportEmail: "support@yourcompany.com"
-      SupportUrl: "https://www.amazon.com"
-      SupportDescription: "Support Description"
-      ProvisioningArtifactParameters:
-      -
-        Description: "Dec 2019"
-        Name: "Dec 2019"
-        Info:
-          LoadTemplateFromURL : "https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/vpc/sc-vpc-ra.json"
-
-  S3BucketProduct:
-    Type: "AWS::ServiceCatalog::CloudFormationProduct"
-    Properties:
-      AcceptLanguage: "en"
-      Description: "This product allows the user to create an S3 Bucket locking down the access to a specific CIDR."
-      Distributor: "Amazon"
-      Name: "S3 Bucket Product"
-      Owner: "IT Services"
-      SupportEmail: "support@yourcompany.com"
-      SupportUrl: "https://www.amazon.com"
-      SupportDescription: "Support Description"
-      ProvisioningArtifactParameters:
-      -
-        Description: "Dec 2019"
-        Name: "Dec 2019"
-        Info:
-          LoadTemplateFromURL: "https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/s3/sc-s3-cidr-ra.json"
-
-  BaselinePortfolio:
-    Type: "AWS::ServiceCatalog::Portfolio"
-    Properties:
-      DisplayName: "Baseline-Portfolio"
-      AcceptLanguage: "en"
-      ProviderName: "Amazon"
-
-  LinuxAssociation:
-    Type: "AWS::ServiceCatalog::PortfolioProductAssociation"
-    Properties:
-      ProductId: !Ref EC2LinuxProduct
-      PortfolioId: !Ref BaselinePortfolio
-
-  LinuxConstraint:
-    Type: AWS::ServiceCatalog::LaunchRoleConstraint
-    Properties:
-      AcceptLanguage: "en"
-      Description: "Launch Constraint for this AWS Service Catalog product"
-      PortfolioId: !Ref BaselinePortfolio
-      ProductId: !Ref EC2LinuxProduct
-      RoleArn: !GetAtt SCEC2LaunchRole.Arn
-
-  WindowsAssociation:
-    Type: "AWS::ServiceCatalog::PortfolioProductAssociation"
-    Properties:
-      ProductId: !Ref EC2WindowsProduct
-      PortfolioId: !Ref BaselinePortfolio
-
-  WindowsConstraint:
-    Type: AWS::ServiceCatalog::LaunchRoleConstraint
-    Properties:
-      AcceptLanguage: "en"
-      Description: "Launch Constraint for this AWS Service Catalog product"
-      PortfolioId: !Ref BaselinePortfolio
-      ProductId: !Ref EC2WindowsProduct
-      RoleArn: !GetAtt SCEC2LaunchRole.Arn
-	  
-  VPCAssociation:
-     Type: "AWS::ServiceCatalog::PortfolioProductAssociation"
-     Properties:
-       ProductId: !Ref VPCProduct
-       PortfolioId: !Ref BaselinePortfolio
-
-  VPCConstraint:
-    Type: AWS::ServiceCatalog::LaunchRoleConstraint
-    Properties:
-      AcceptLanguage: "en"
-      Description: "Launch Constraint for this AWS Service Catalog product"
-      PortfolioId: !Ref BaselinePortfolio
-      ProductId: !Ref VPCProduct
-      RoleArn: !GetAtt SCEC2LaunchRole.Arn
-
-  S3BucketAssociation:
-     Type: "AWS::ServiceCatalog::PortfolioProductAssociation"
-     Properties:
-       ProductId: !Ref S3BucketProduct
-       PortfolioId: !Ref BaselinePortfolio
-
-  S3BucketConstraint:
-    Type: AWS::ServiceCatalog::LaunchRoleConstraint
-    Properties:
-      AcceptLanguage: "en"
-      Description: "Launch Constraint for this AWS Service Catalog product"
-      PortfolioId: !Ref BaselinePortfolio
-      ProductId: !Ref S3BucketProduct
-      RoleArn: !GetAtt SCEC2LaunchRole.Arn
-
-  PortfolioPrincipalAssociationforEndUser:
-    Type: "AWS::ServiceCatalog::PortfolioPrincipalAssociation"
-    Properties:
-      PrincipalARN: !GetAtt ServiceCatalogUser.Arn
-      PortfolioId: !Ref BaselinePortfolio
-      PrincipalType: IAM
+    CloudTrailDestinationBucket:
+        Type: 'AWS::S3::Bucket'
+        Condition: CloudTrailEnabled
+        Properties:
+            BucketName: null
+        DeletionPolicy: Delete
+    CloudTrailBucketPolicy:
+        Type: 'AWS::S3::BucketPolicy'
+        Condition: CloudTrailEnabled
+        DependsOn:
+            - CloudTrailDestinationBucket
+        Properties:
+            Bucket: null
+            PolicyDocument: {Id: CloudTrailService, Statement: [{Action: ['s3:GetBucketAcl'], Principal: {Service: cloudtrail.amazonaws.com}, Effect: Allow, Resource: [null], Sid: AllowCloudTrailServiceGetAcl}, {Action: ['s3:PutObject'], Principal: {Service: cloudtrail.amazonaws.com}, Effect: Allow, Condition: {StringEquals: {'s3:x-amz-acl': bucket-owner-full-control}}, Resource: [null], Sid: AllowCloudTrailServicePutS}], Version: 2012-10-17T00:00:00.000Z}
+    CloudTrailKMSKey:
+        Type: 'AWS::KMS::Key'
+        DeletionPolicy: Delete
+        Condition: CloudTrailEncryptS3LogsEnabled
+        Properties:
+            Description: 'KMS Key for Cloudtrail to use to encrypt logs stored in S3'
+            KeyPolicy: {Version: 2012-10-17T00:00:00.000Z, Id: 'Key policy created by CloudTrail', Statement: [{Sid: 'Enable IAM User Permissions', Effect: Allow, Principal: {AWS: [null]}, Action: 'kms:*', Resource: '*'}, {Sid: 'Allow CloudTrail to encrypt logs', Effect: Allow, Principal: {Service: [cloudtrail.amazonaws.com]}, Action: 'kms:GenerateDataKey*', Resource: '*', Condition: {StringLike: {'kms:EncryptionContext:aws:cloudtrail:arn': null}}}, {Sid: 'Allow CloudTrail to describe key', Effect: Allow, Principal: {Service: [cloudtrail.amazonaws.com]}, Action: 'kms:DescribeKey', Resource: '*'}, {Sid: 'Allow principals in the account to decrypt log files', Effect: Allow, Principal: {AWS: '*'}, Action: ['kms:Decrypt', 'kms:ReEncryptFrom'], Resource: '*', Condition: {StringEquals: {'kms:CallerAccount': null}, StringLike: {'kms:EncryptionContext:aws:cloudtrail:arn': null}}}, {Sid: 'Allow alias creation during setup', Effect: Allow, Principal: {AWS: '*'}, Action: 'kms:CreateAlias', Resource: '*', Condition: {StringEquals: {'kms:ViaService': null, 'kms:CallerAccount': null}}}, {Sid: 'Enable cross account log decryption', Effect: Allow, Principal: {AWS: '*'}, Action: ['kms:Decrypt', 'kms:ReEncryptFrom'], Resource: '*', Condition: {StringEquals: {'kms:CallerAccount': null}, StringLike: {'kms:EncryptionContext:aws:cloudtrail:arn': null}}}]}
+    CloudTrailDestinationTrail:
+        Type: 'AWS::CloudTrail::Trail'
+        DependsOn:
+            - CloudTrailBucketPolicy
+            - CloudTrailCWLogsGroup
+            - CloudTrailCloudWatchLogsRole
+        Properties:
+            TrailName: default
+            S3BucketName: null
+            CloudWatchLogsLogGroupArn: null
+            CloudWatchLogsRoleArn: null
+            EnableLogFileValidation: true
+            EventSelectors: [{IncludeManagementEvents: true}, {ReadWriteType: All}, null]
+            IncludeGlobalServiceEvents: true
+            IsMultiRegionTrail: true
+            IsLogging: true
+            KMSKeyId: null
+    CloudTrailCWLogsGroup:
+        Type: 'AWS::Logs::LogGroup'
+        Properties:
+            RetentionInDays: 90
+    CloudTrailCloudWatchLogsRole:
+        Type: 'AWS::IAM::Role'
+        DependsOn:
+            - CloudTrailCWLogsGroup
+        Properties:
+            RoleName: CloudTrail_CloudWatchLogs_Role
+            AssumeRolePolicyDocument: {Statement: [{Action: ['sts:AssumeRole'], Effect: Allow, Principal: {Service: cloudtrail.amazonaws.com}}], Version: 2012-10-17T00:00:00.000Z}
+            Policies: [{PolicyDocument: {Statement: [{Action: ['logs:CreateLogStream'], Effect: Allow, Resource: null}, {Action: ['logs:PutLogEvents'], Effect: Allow, Resource: null}], Version: 2012-10-17T00:00:00.000Z}, PolicyName: CloudtrailInteractionPolicy}]
+    ConfigRole:
+        Type: 'AWS::IAM::Role'
+        Condition: ConfigEnabled
+        Properties:
+            RoleName: AWSConfigCustomRole
+            AssumeRolePolicyDocument: {Statement: [{Action: ['sts:AssumeRole'], Effect: Allow, Principal: {Service: config.amazonaws.com}}], Version: 2012-10-17T00:00:00.000Z}
+            ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSConfigRole']
+            Path: /service-role/
+            Policies: [{PolicyDocument: {Statement: [{Effect: Allow, Action: ['s3:PutObject'], Resource: null}, {Effect: Allow, Action: ['s3:GetBucketAcl'], Resource: null}], Version: 2012-10-17T00:00:00.000Z}, PolicyName: ConfigServiceS3}]
+    ConfigDeliveryChannel:
+        Type: 'AWS::Config::DeliveryChannel'
+        Condition: ConfigEnabled
+        Properties:
+            Name: default
+            ConfigSnapshotDeliveryProperties: {DeliveryFrequency: null}
+            S3BucketName: null
+    ConfigRecorder:
+        Type: 'AWS::Config::ConfigurationRecorder'
+        Condition: ConfigEnabled
+        Properties:
+            Name: default
+            RecordingGroup: {AllSupported: 'true', IncludeGlobalResourceTypes: 'true'}
+            RoleARN: null
+    ConfigBucket:
+        Type: 'AWS::S3::Bucket'
+        Properties:
+            BucketName: null
+            LoggingConfiguration: null
+        DeletionPolicy: Delete
+    ConfigBucketPolicy:
+        Type: 'AWS::S3::BucketPolicy'
+        DependsOn:
+            - ConfigBucket
+        Properties:
+            Bucket: null
+            PolicyDocument: {Id: ConfigService, Statement: [null, {Action: 's3:GetBucketAcl', Effect: Allow, Principal: {Service: cloudtrail.amazonaws.com}, Resource: null, Sid: ConfigServiceACLCheck}, {Action: 's3:PutObject', Condition: {StringEquals: {'s3:x-amz-acl': bucket-owner-full-control}}, Effect: Allow, Principal: {Service: cloudtrail.amazonaws.com}, Resource: [null], Sid: ConfigServiceWrite}], Version: 2012-10-17T00:00:00.000Z}
+    GuardDutyDetector:
+        Type: 'AWS::GuardDuty::Detector'
+        Properties:
+            Enable: true
+            FindingPublishingFrequency: FIFTEEN_MINUTES
+    GuardDutySNSTopic:
+        Type: 'AWS::SNS::Topic'
+        Properties:
+            TopicName: GuardDuty-Email
+    GuardDutyCWEvent:
+        Type: 'AWS::Events::Rule'
+        Properties:
+            Description: 'GuardDuty Email Event'
+            EventPattern: {source: [aws.guardduty], detail-type: ['GuardDuty Finding']}
+            State: ENABLED
+            Targets: [{Arn: null, Id: GuardDuty-Email}]
+    GuardDutySNSSubscription:
+        Type: 'AWS::SNS::Subscription'
+        Properties:
+            Endpoint: null
+            Protocol: email
+            TopicArn: null
+    ServiceCatalogUser:
+        Type: 'AWS::IAM::User'
+        Properties:
+            UserName: null
+            Path: /
+            LoginProfile: {Password: null, PasswordResetRequired: true}
+    ServiceCatalogUserKey:
+        Type: 'AWS::IAM::AccessKey'
+        Properties:
+            Status: Active
+            UserName: null
+    ServiceCatalogUserGroup:
+        Type: 'AWS::IAM::Group'
+        Properties:
+            GroupName: ServiceCatalogUserGroup
+            ManagedPolicyArns: ['arn:aws:iam::aws:policy/AWSServiceCatalogEndUserFullAccess', 'arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess', 'arn:aws:iam::aws:policy/IAMUserChangePassword']
+            Path: /
+    ServiceCatalogGroupPolicy:
+        Type: 'AWS::IAM::Policy'
+        Properties:
+            Groups: [null]
+            PolicyDocument: {Version: '2012-10-17', Statement: [{Effect: Allow, Action: ['cloudformation:Describe*', 'cloudformation:List*', 'cloudformation:Get*', 'ec2:CreateKeyPair'], Resource: '*'}]}
+            PolicyName: KeyPairCreate
+    AddUserToGroup:
+        Type: 'AWS::IAM::UserToGroupAddition'
+        DependsOn: ServiceCatalogUserGroup
+        Properties:
+            GroupName: null
+            Users: [null]
+    SCEC2LaunchRole:
+        Type: 'AWS::IAM::Role'
+        Properties:
+            RoleName: SCEC2LaunchRole
+            ManagedPolicyArns: ['arn:aws:iam::aws:policy/AdministratorAccess']
+            AssumeRolePolicyDocument: {Version: 2012-10-17T00:00:00.000Z, Statement: [{Effect: Allow, Principal: {Service: [servicecatalog.amazonaws.com]}, Action: ['sts:AssumeRole']}]}
+            Path: /
+    EC2LinuxProduct:
+        Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+        Properties:
+            AcceptLanguage: en
+            Description: 'This product builds one Amazon Linux EC2 instance and create a SSM patch baseline, maintenance window, and patch task to scan for and install operating system updates the EC2 instance.'
+            Distributor: Amazon
+            Name: 'Amazon Elastic Compute Cloud (EC2) Linux'
+            Owner: 'IT Services'
+            SupportEmail: support@yourcompany.com
+            SupportUrl: 'https://www.amazon.com'
+            SupportDescription: 'Support Description'
+            ProvisioningArtifactParameters: [{Description: 'Dec 2019', Name: 'Dec 2019', Info: {LoadTemplateFromURL: 'https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/ec2/sc-ec2-linux-ra.json'}}]
+    EC2WindowsProduct:
+        Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+        Properties:
+            AcceptLanguage: en
+            Description: 'This product builds one Amazon Windows EC2 instance and create a SSM patch baseline, maintenance window, and patch task to scan for and install operating system updates the EC2 instance.'
+            Distributor: Amazon
+            Name: 'Amazon Elastic Compute Cloud (EC2) Windows'
+            Owner: 'IT Services'
+            SupportEmail: support@yourcompany.com
+            SupportUrl: 'https://www.amazon.com'
+            SupportDescription: 'Support Description'
+            ProvisioningArtifactParameters: [{Description: 'Dec 2019', Name: 'Dec 2019', Info: {LoadTemplateFromURL: 'https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/ec2/sc-ec2-windows-ra.json'}}]
+    VPCProduct:
+        Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+        Properties:
+            AcceptLanguage: en
+            Description: 'This product builds one Amazon VPC with Public Subnets, Private Subnets, Route Tables, NAT Gateway and Internet Gateway'
+            Distributor: Amazon
+            Name: 'Amazon VPC'
+            Owner: 'IT Services'
+            SupportEmail: support@yourcompany.com
+            SupportUrl: 'https://www.amazon.com'
+            SupportDescription: 'Support Description'
+            ProvisioningArtifactParameters: [{Description: 'Dec 2019', Name: 'Dec 2019', Info: {LoadTemplateFromURL: 'https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/vpc/sc-vpc-ra.json'}}]
+    S3BucketProduct:
+        Type: 'AWS::ServiceCatalog::CloudFormationProduct'
+        Properties:
+            AcceptLanguage: en
+            Description: 'This product allows the user to create an S3 Bucket locking down the access to a specific CIDR.'
+            Distributor: Amazon
+            Name: 'S3 Bucket Product'
+            Owner: 'IT Services'
+            SupportEmail: support@yourcompany.com
+            SupportUrl: 'https://www.amazon.com'
+            SupportDescription: 'Support Description'
+            ProvisioningArtifactParameters: [{Description: 'Dec 2019', Name: 'Dec 2019', Info: {LoadTemplateFromURL: 'https://raw.githubusercontent.com/aws-samples/aws-service-catalog-reference-architectures/master/s3/sc-s3-cidr-ra.json'}}]
+    BaselinePortfolio:
+        Type: 'AWS::ServiceCatalog::Portfolio'
+        Properties:
+            DisplayName: Baseline-Portfolio
+            AcceptLanguage: en
+            ProviderName: Amazon
+    LinuxAssociation:
+        Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+        Properties:
+            ProductId: null
+            PortfolioId: null
+    LinuxConstraint:
+        Type: 'AWS::ServiceCatalog::LaunchRoleConstraint'
+        Properties:
+            AcceptLanguage: en
+            Description: 'Launch Constraint for this AWS Service Catalog product'
+            PortfolioId: null
+            ProductId: null
+            RoleArn: null
+    WindowsAssociation:
+        Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+        Properties:
+            ProductId: null
+            PortfolioId: null
+    WindowsConstraint:
+        Type: 'AWS::ServiceCatalog::LaunchRoleConstraint'
+        Properties:
+            AcceptLanguage: en
+            Description: 'Launch Constraint for this AWS Service Catalog product'
+            PortfolioId: null
+            ProductId: null
+            RoleArn: null
+    VPCAssociation:
+        Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+        Properties:
+            ProductId: null
+            PortfolioId: null
+    VPCConstraint:
+        Type: 'AWS::ServiceCatalog::LaunchRoleConstraint'
+        Properties:
+            AcceptLanguage: en
+            Description: 'Launch Constraint for this AWS Service Catalog product'
+            PortfolioId: null
+            ProductId: null
+            RoleArn: null
+    S3BucketAssociation:
+        Type: 'AWS::ServiceCatalog::PortfolioProductAssociation'
+        Properties:
+            ProductId: null
+            PortfolioId: null
+    S3BucketConstraint:
+        Type: 'AWS::ServiceCatalog::LaunchRoleConstraint'
+        Properties:
+            AcceptLanguage: en
+            Description: 'Launch Constraint for this AWS Service Catalog product'
+            PortfolioId: null
+            ProductId: null
+            RoleArn: null
+    PortfolioPrincipalAssociationforEndUser:
+        Type: 'AWS::ServiceCatalog::PortfolioPrincipalAssociation'
+        Properties:
+            PrincipalARN: null
+            PortfolioId: null
+            PrincipalType: IAM
